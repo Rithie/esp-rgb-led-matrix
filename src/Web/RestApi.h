@@ -85,6 +85,11 @@ typedef enum
 void init(AsyncWebServer& srv);
 
 /**
+ * Process all REST requests.
+ */
+void process();
+
+/**
  * Handle invalid rest path request.
  * 
  * @param[in] request   HTTP request

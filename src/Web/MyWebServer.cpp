@@ -117,6 +117,13 @@ void MyWebServer::end()
     return;
 }
 
+void MyWebServer::process()
+{
+    RestApi::process();
+
+    return;
+}
+
 AsyncWebServer& MyWebServer::getInstance()
 {
     return gWebServer;

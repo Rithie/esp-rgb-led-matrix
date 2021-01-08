@@ -128,6 +128,9 @@ void ConnectedState::process(StateMachine& sm)
     /* Handle update, there may be one in the background. */
     UpdateMgr::getInstance().process();
 
+    /* Handle web requests */
+    MyWebServer::process();
+
     /* Restart requested by update manager? This may happen after a successful received
      * new firmware or filesystem binary.
      */

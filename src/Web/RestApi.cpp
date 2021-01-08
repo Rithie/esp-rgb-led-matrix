@@ -40,6 +40,8 @@
 #include "Version.h"
 #include "PluginMgr.h"
 #include "WiFiUtil.h"
+#include "TaskDecoupler.hpp"
+#include "WebReq.hpp"
 
 #include <Util.h>
 #include <WiFi.h>
@@ -64,6 +66,8 @@
  * Prototypes
  *****************************************************************************/
 
+static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler);
+static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler);
 static void handleStatus(AsyncWebServerRequest* request);
 static void handleSlots(AsyncWebServerRequest* request);
 static void handlePlugin(AsyncWebServerRequest* request);
@@ -78,6 +82,17 @@ static void handleFileDelete(AsyncWebServerRequest* request);
 /******************************************************************************
  * Local Variables
  *****************************************************************************/
+
+/** Max. number of requests, which to store in the task decoupling queue. */
+static const uint32_t           REQ_QUEUE_MAX_ITEMS = 20U;
+
+/**
+ * Task decoupler, to handle all REST requests in the main loop. This shall
+ * prevent the AsyncTCP task from not being able to feed the watchdog and
+ * to have any kind of flash access in the main loop (less artifacts on the
+ * display).
+ */
+static TaskDecoupler<WebReq*>   gTaskDecoupler;
 
 /******************************************************************************
  * Public Methods
@@ -97,14 +112,51 @@ static void handleFileDelete(AsyncWebServerRequest* request);
 
 void RestApi::init(AsyncWebServer& srv)
 {
-    (void)srv.on("/rest/api/v1/status", handleStatus);
-    (void)srv.on("/rest/api/v1/display/slots", handleSlots);
-    (void)srv.on("/rest/api/v1/plugin", handlePlugin);
-    (void)srv.on("/rest/api/v1/button", handleButton);
-    (void)srv.on("/rest/api/v1/fs/file", HTTP_GET, handleFileGet);
-    (void)srv.on("/rest/api/v1/fs/file", HTTP_POST, handleFilePost, uploadHandler);
-    (void)srv.on("/rest/api/v1/fs/file", HTTP_DELETE, handleFileDelete);
-    (void)srv.on("/rest/api/v1/fs", handleFilesystem);
+    gTaskDecoupler.init(REQ_QUEUE_MAX_ITEMS, sizeof(WebReq));
+
+    (void)srv.on("/rest/api/v1/status",
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleStatus); });
+
+    (void)srv.on("/rest/api/v1/display/slots",
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleSlots); });
+
+    (void)srv.on("/rest/api/v1/plugin",
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handlePlugin); });
+
+    (void)srv.on("/rest/api/v1/button",
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleButton); });
+
+    (void)srv.on("/rest/api/v1/fs/file",
+        HTTP_GET,
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleFileGet); });
+
+    (void)srv.on("/rest/api/v1/fs/file",
+        HTTP_POST,
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleFilePost); },
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) { safeUploadHandler(request, filename, index, data, len, final, uploadHandler); });
+
+    (void)srv.on("/rest/api/v1/fs/file",
+        HTTP_DELETE,
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleFileDelete); });
+
+    (void)srv.on("/rest/api/v1/fs",
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, handleFilesystem); });
+
+    return;
+}
+
+void RestApi::process()
+{
+    WebReq* msg = nullptr;
+
+    if (true == gTaskDecoupler.getItem(msg))
+    {
+        if (nullptr != msg)
+        {
+            msg->call();
+            delete msg;
+        }
+    }
 
     return;
 }
@@ -150,6 +202,63 @@ void RestApi::error(AsyncWebServerRequest* request)
 /******************************************************************************
  * Local Functions
  *****************************************************************************/
+
+/**
+ * Queues a web request in. If there is no space available, the request will be
+ * aborted.
+ * 
+ * @param[in] request           The web request.
+ * @param[in] requestHandler    The deferred request handler.
+ */
+static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler)
+{
+    WebPageReq* item = new WebPageReq(request, requestHandler);
+    
+    if (nullptr == item)
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else if (false == gTaskDecoupler.addItem(item))
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else
+    {
+        /* Successful added to queue. */
+        ;
+    }
+}
+
+/**
+ * Queues a web upload request in. If there is no space available, the request will be
+ * aborted.
+ * 
+ * @param[in] request           The web request.
+ * @param[in] filename          Filename of the uploaded file.
+ * @param[in] index             Index number of the received packet.
+ * @param[in] data              Packet data
+ * @param[in] len               Packet length in byte
+ * @param[in] final             Final bit is set for the last packet.
+ * @param[in] uploadHandler     The deferred request handler.
+ */
+static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler)
+{
+    WebUploadReq* item = new WebUploadReq(request, uploadHandler, filename, index, data, len, final);
+    
+    if (nullptr == item)
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else if (false == gTaskDecoupler.addItem(item))
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else
+    {
+        /* Successful added to queue. */
+        ;
+    }
+}
 
 /**
  * Get status information.

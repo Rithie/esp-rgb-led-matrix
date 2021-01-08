@@ -84,6 +84,12 @@ void begin(void);
 void end(void);
 
 /**
+ * Process the web server.
+ * This shall be called periodically.
+ */
+void process();
+
+/**
  * Get webserver instance.
  *
  * @return Webserver instance.
