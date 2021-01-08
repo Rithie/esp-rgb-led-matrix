@@ -42,6 +42,8 @@
 #include "DisplayMgr.h"
 #include "RestApi.h"
 #include "PluginMgr.h"
+#include "TaskDecoupler.hpp"
+#include "WebReq.hpp"
 
 #include <WiFi.h>
 #include <Esp.h>
@@ -77,20 +79,14 @@ struct TmplKeyWordFunc
  * Prototypes
  *****************************************************************************/
 
-static String fitToSpiffs(const String& path, const String& filenNameWithoutExt, const String& fileNameExtension);
+static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler);
+static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler);
 static bool isValidHostname(const String& hostname);
-
 static String tmplPageProcessor(const String& var);
 
-static void aboutPage(AsyncWebServerRequest* request);
-static void debugPage(AsyncWebServerRequest* request);
-static void displayPage(AsyncWebServerRequest* request);
-static void editPage(AsyncWebServerRequest* request);
-static void indexPage(AsyncWebServerRequest* request);
-static void infoPage(AsyncWebServerRequest* request);
+static void handleNotFound(AsyncWebServerRequest* request);
 static bool storeSetting(KeyValue* parameter, const String& value, DynamicJsonDocument& jsonDoc);
 static void settingsPage(AsyncWebServerRequest* request);
-static void updatePage(AsyncWebServerRequest* request);
 static void uploadPage(AsyncWebServerRequest* request);
 static void uploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final);
 
@@ -110,29 +106,31 @@ namespace tmpl
  * Local Variables
  *****************************************************************************/
 
+/** Max. number of requests, which to store in the task decoupling queue. */
+static const uint32_t           REQ_QUEUE_MAX_ITEMS     = 20U;
+
 /** Firmware binary filename, used for update. */
-static const char*      FIRMWARE_FILENAME               = "firmware.bin";
+static const char*              FIRMWARE_FILENAME       = "firmware.bin";
 
 /** Filesystem binary filename, used for update. */
-static const char*      FILESYSTEM_FILENAME             = "spiffs.bin";
+static const char*              FILESYSTEM_FILENAME     = "spiffs.bin";
 
-/** Path to the plugin webpages. */
-static const String     PLUGIN_PAGE_PATH                = "/plugins/";
-
-/** Plugin webpage file extension. */
-static const String     PLUGIN_PAGE_FILE_EXTENSION      = ".html";
-
-/** SPIFFS limits the max. filename length, which includes the path as well. */
-static const uint32_t   SPIFFS_FILENAME_LENGTH_LIMIT    = 32U;
+/**
+ * Task decoupler, to handle all REST requests in the main loop. This shall
+ * prevent the AsyncTCP task from not being able to feed the watchdog and
+ * to have any kind of flash access in the main loop (less artifacts on the
+ * display).
+ */
+static TaskDecoupler<WebReq*>   gTaskDecoupler;
 
 /** Flag used to signal any kind of file upload error. */
-static bool             gIsUploadError                  = false;
+static bool                     gIsUploadError          = false;
 
 /**
  * List of all used template keywords and the function how to retrieve the information.
  * The list is alphabetic sorted in ascending order.
  */
-static TmplKeyWordFunc  gTmplKeyWordToFunc[]            =
+static TmplKeyWordFunc          gTmplKeyWordToFunc[]    =
 {
     "ARDUINO_IDF_BRANCH",   []() -> String { return CONFIG_ARDUINO_IDF_BRANCH; },
     "ESP_CHIP_ID",          tmpl::getEspChipId,
@@ -182,17 +180,22 @@ static TmplKeyWordFunc  gTmplKeyWordToFunc[]            =
 
 void Pages::init(AsyncWebServer& srv)
 {
-    const char* pluginName = nullptr;
+    gTaskDecoupler.init(REQ_QUEUE_MAX_ITEMS, sizeof(WebReq*));
 
-    (void)srv.on("/about.html", HTTP_GET, aboutPage);
-    (void)srv.on("/debug.html", HTTP_GET, debugPage);
-    (void)srv.on("/display.html", HTTP_GET, displayPage);
-    (void)srv.on("/edit.html", HTTP_GET, editPage);
-    (void)srv.on("/index.html", HTTP_GET, indexPage);
-    (void)srv.on("/info.html", HTTP_GET, infoPage);
-    (void)srv.on("/settings.html", HTTP_GET | HTTP_POST, settingsPage);
-    (void)srv.on("/update.html", HTTP_GET, updatePage);
-    (void)srv.on("/upload.html", HTTP_POST, uploadPage, uploadHandler);
+    /* Here are only request handlers, which can not be served static and need
+     * further algorithmic.
+     * 
+     * Every static served file will be handled via handleNotFound().
+     */
+
+    (void)srv.on("/settings.html",
+        HTTP_GET | HTTP_POST,
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, settingsPage); });
+
+    (void)srv.on("/upload.html",
+        HTTP_POST,
+        [](AsyncWebServerRequest* request) { safeReqHandler(request, uploadPage); },
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) { safeUploadHandler(request, filename, index, data, len, final, uploadHandler); });
 
     (void)srv.on("/", [](AsyncWebServerRequest* request) {
         if (nullptr != request)
@@ -201,51 +204,25 @@ void Pages::init(AsyncWebServer& srv)
         }
     });
 
-    /* Serve files with static content with enabled cache control.
-     * The client may cache files from filesytem for 1 hour.
-     */
-    (void)srv.serveStatic("/favicon.png", SPIFFS, "/favicon.png", "max-age=3600");
-    (void)srv.serveStatic("/images/", SPIFFS, "/images/", "max-age=3600");
-    (void)srv.serveStatic("/js/", SPIFFS, "/js/", "max-age=3600");
-    (void)srv.serveStatic("/style/", SPIFFS, "/style/", "max-age=3600");
+    return;
+}
 
-    /* Add one page per plugin. */
-    pluginName = PluginMgr::getInstance().findFirst();
-    while(nullptr != pluginName)
+void Pages::process()
+{
+    WebReq* msg = nullptr;
+
+    if (true == gTaskDecoupler.getItem(msg))
     {
-        String uri = fitToSpiffs(PLUGIN_PAGE_PATH, String(pluginName), PLUGIN_PAGE_FILE_EXTENSION);
-
-        (void)srv.on(   uri.c_str(),
-                        HTTP_GET,
-                        [uri](AsyncWebServerRequest* request)
-                        {
-                            if (nullptr == request)
-                            {
-                                return;
-                            }
-
-                            /* Force authentication! */
-                            if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-                            {
-                                /* Request DIGEST authentication */
-                                request->requestAuthentication();
-                                return;
-                            }
-
-                            request->send(SPIFFS, uri, "text/html", false, tmplPageProcessor);
-                        });
-
-        pluginName = PluginMgr::getInstance().findNext();
+        if (nullptr != msg)
+        {
+            msg->call();
+            delete msg;
+        }
     }
 
     return;
 }
 
-/**
- * Error web page used in case a requested path was not found.
- *
- * @param[in] request   HTTP request
- */
 void Pages::error(AsyncWebServerRequest* request)
 {
     if (nullptr == request)
@@ -253,17 +230,10 @@ void Pages::error(AsyncWebServerRequest* request)
         return;
     }
 
-    LOG_INFO("Invalid web request: %s", request->url().c_str());
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/error.html", "text/html", false, tmplPageProcessor);
+    /* Handles all static served files and of course the case if a request
+     * can not be handled.
+     */
+    safeReqHandler(request, handleNotFound);
 
     return;
 }
@@ -273,20 +243,92 @@ void Pages::error(AsyncWebServerRequest* request)
  *****************************************************************************/
 
 /**
- * SPIFFS full filename (path + filename + extension) is limited to 32 characters.
- * This function reduces only the filename length and returns the full path.
- *
- * @param[in] path                  Path, e.g. "/mypath/".
- * @param[in] fileNameWithoutExt    Filename without extension, e.g. "myFile".
- * @param[in] fileNameExtension     Filename extension, e.g. ".html"
- *
- * @return Full path
+ * Queues a authenticated web request in. If there is no space available, the request will be
+ * aborted.
+ * 
+ * @param[in] request           The web request.
+ * @param[in] requestHandler    The deferred request handler.
  */
-static String fitToSpiffs(const String& path, const String& filenNameWithoutExt, const String& fileNameExtension)
+static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler)
 {
-    String fileNameReduced = filenNameWithoutExt.substring(0, SPIFFS_FILENAME_LENGTH_LIMIT - path.length() - fileNameExtension.length() - 1U);
+    WebPageReq* item = nullptr;
 
-    return path + fileNameReduced + fileNameExtension;
+    if ((nullptr == request) ||
+        (nullptr == requestHandler))
+    {
+        return;
+    }
+
+    /* Force authentication! */
+    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
+    {
+        /* Request DIGEST authentication */
+        request->requestAuthentication();
+        return;
+    }
+
+    item = new WebPageReq(request, requestHandler);
+    
+    if (nullptr == item)
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else if (false == gTaskDecoupler.addItem(item))
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else
+    {
+        /* Successful added to queue. */
+        ;
+    }
+}
+
+/**
+ * Queues a authenticated web upload request in. If there is no space available, the request will be
+ * aborted.
+ * 
+ * @param[in] request           The web request.
+ * @param[in] filename          Filename of the uploaded file.
+ * @param[in] index             Index number of the received packet.
+ * @param[in] data              Packet data
+ * @param[in] len               Packet length in byte
+ * @param[in] final             Final bit is set for the last packet.
+ * @param[in] uploadHandler     The deferred request handler.
+ */
+static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler)
+{
+    WebUploadReq* item = nullptr;
+
+    if ((nullptr == request) ||
+        (nullptr == uploadHandler))
+    {
+        return;
+    }
+
+    /* Force authentication! */
+    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
+    {
+        /* Request DIGEST authentication */
+        request->requestAuthentication();
+        return;
+    }
+
+    item = new WebUploadReq(request, uploadHandler, filename, index, data, len, final);
+    
+    if (nullptr == item)
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else if (false == gTaskDecoupler.addItem(item))
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else
+    {
+        /* Successful added to queue. */
+        ;
+    }
 }
 
 /**
@@ -382,151 +424,56 @@ static String tmplPageProcessor(const String& var)
 }
 
 /**
- * About page, showing the log output on demand.
+ * Handle all static served files and the of course will respond a error
+ * page if request can not be handled.
  *
  * @param[in] request   HTTP request
  */
-static void aboutPage(AsyncWebServerRequest* request)
+static void handleNotFound(AsyncWebServerRequest* request)
 {
+    FS& fs = SPIFFS;
+
     if (nullptr == request)
     {
         return;
     }
 
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
+    /* Serve static html files. */
+    if ((0 != request->url().endsWith(".html")) ||
+        (0 != request->url().endsWith("*.htm")))
     {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
+        /* If a requested html file down't exist, show the error page. */
+        if (false == fs.exists(request->url()))
+        {
+            LOG_INFO("Invalid web request: %s", request->url().c_str());
+            request->send(fs, "/error.html", "text/html", false, tmplPageProcessor);
+        }
+        else
+        {
+            request->send(fs, request->url(), "text/html", false, tmplPageProcessor);
+        }
     }
-
-    request->send(SPIFFS, "/about.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
- * Debug page, showing the log output on demand.
- *
- * @param[in] request   HTTP request
- */
-static void debugPage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
+    /* Some browsers requests for the favorite icon on different places. */
+    else if (0 != request->url().endsWith("/favicon.png"))
     {
-        return;
+        request->send(fs, "/favicon.png");
     }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
+    /* Handle all other static files with cache control. */
+    else if ((0 != request->url().startsWith("/images")) ||
+             (0 != request->url().startsWith("/js")) ||
+             (0 != request->url().startsWith("/style")))
     {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
+        AsyncWebServerResponse* response = request->beginResponse(fs, request->url());
+
+        response->addHeader("Cache-Control", "max-age=3600");
+        request->send(response);
     }
-
-    request->send(SPIFFS, "/debug.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
- * Display page, showing current display content.
- *
- * @param[in] request   HTTP request
- */
-static void displayPage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
+    /* Handle any other request. */
+    else
     {
-        return;
+        LOG_INFO("Invalid web request: %s", request->url().c_str());
+        request->send(HttpStatus::STATUS_CODE_NOT_FOUND);
     }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/display.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
- * File edit page.
- *
- * @param[in] request   HTTP request
- */
-static void editPage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
-    {
-        return;
-    }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/edit.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
- * Index page on root path ("/").
- *
- * @param[in] request   HTTP request
- */
-static void indexPage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
-    {
-        return;
-    }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/index.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
- * Info page shows general informations.
- *
- * @param[in] request   HTTP request
- */
-static void infoPage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
-    {
-        return;
-    }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/info.html", "text/html", false, tmplPageProcessor);
 
     return;
 }
@@ -854,31 +801,6 @@ static void settingsPage(AsyncWebServerRequest* request)
 }
 
 /**
- * Page for software update.
- *
- * @param[in] request   HTTP request
- */
-static void updatePage(AsyncWebServerRequest* request)
-{
-    if (nullptr == request)
-    {
-        return;
-    }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
-        return;
-    }
-
-    request->send(SPIFFS, "/update.html", "text/html", false, tmplPageProcessor);
-
-    return;
-}
-
-/**
  * Page for upload result.
  *
  * @param[in] request   HTTP request
@@ -887,14 +809,6 @@ static void uploadPage(AsyncWebServerRequest* request)
 {
     if (nullptr == request)
     {
-        return;
-    }
-
-    /* Force authentication! */
-    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
-    {
-        /* Request DIGEST authentication */
-        request->requestAuthentication();
         return;
     }
 

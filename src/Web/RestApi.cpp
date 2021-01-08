@@ -112,7 +112,7 @@ static TaskDecoupler<WebReq*>   gTaskDecoupler;
 
 void RestApi::init(AsyncWebServer& srv)
 {
-    gTaskDecoupler.init(REQ_QUEUE_MAX_ITEMS, sizeof(WebReq));
+    gTaskDecoupler.init(REQ_QUEUE_MAX_ITEMS, sizeof(WebReq*));
 
     (void)srv.on("/rest/api/v1/status",
         [](AsyncWebServerRequest* request) { safeReqHandler(request, handleStatus); });

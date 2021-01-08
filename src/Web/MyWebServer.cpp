@@ -119,6 +119,7 @@ void MyWebServer::end()
 
 void MyWebServer::process()
 {
+    Pages::process();
     RestApi::process();
 
     return;
