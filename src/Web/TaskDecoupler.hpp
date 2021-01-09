@@ -111,7 +111,7 @@ public:
 
         if (nullptr != m_hQueue)
         {
-            if (pdTRUE == xQueueSend(m_hQueue, &item, WAIT_TIME))
+            if (pdTRUE == xQueueSend(m_hQueue, &item, WAIT_TIME / portTICK_PERIOD_MS))
             {
                 isSuccessful = true;
             }
@@ -135,7 +135,7 @@ public:
 
         if (nullptr != m_hQueue)
         {
-            if (pdTRUE == xQueueReceive(m_hQueue, &item, WAIT_TIME))
+            if (pdTRUE == xQueueReceive(m_hQueue, &item, WAIT_TIME / portTICK_PERIOD_MS))
             {
                 isSuccessful = true;
             }
@@ -145,10 +145,10 @@ public:
     }
 
     /**
-     * The maximum amount of time in ticks the task should block waiting for
+     * The maximum amount of time in ms the task should block waiting for
      * space to become available on the queue.
      */
-    static const TickType_t WAIT_TIME   = 100U;
+    static const uint32_t   WAIT_TIME   = 1U;
 
 private:
 
