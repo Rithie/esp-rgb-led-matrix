@@ -44,10 +44,10 @@
 #include "PluginMgr.h"
 #include "TaskDecoupler.hpp"
 #include "WebReq.hpp"
+#include "FileSystem.h"
 
 #include <WiFi.h>
 #include <Esp.h>
-#include <SPIFFS.h>
 #include <Update.h>
 #include <Logging.h>
 #include <Util.h>
@@ -143,8 +143,8 @@ static TmplKeyWordFunc          gTmplKeyWordToFunc[]    =
     "FLASH_CHIP_MODE",      tmpl::getFlashChipMode,
     "FLASH_CHIP_SIZE",      []() -> String { return String(ESP.getFlashChipSize() / (1024U * 1024U)); },
     "FLASH_CHIP_SPEED",     []() -> String { return String(ESP.getFlashChipSpeed() / (1000U * 1000U)); },
-    "FS_SIZE",              []() -> String { return String(SPIFFS.totalBytes()); },
-    "FS_SIZE_USED",         []() -> String { return String(SPIFFS.usedBytes()); },
+    "FS_SIZE",              []() -> String { return String(FILESYSTEM.totalBytes()); },
+    "FS_SIZE_USED",         []() -> String { return String(FILESYSTEM.usedBytes()); },
     "HEAP_SIZE",            []() -> String { return String(ESP.getHeapSize()); },
     "HEAP_SIZE_AVAILABLE",  []() -> String { return String(ESP.getFreeHeap()); },
     "HOSTNAME",             tmpl::getHostname,
@@ -435,8 +435,6 @@ static String tmplPageProcessor(const String& var)
  */
 static void handleNotFound(AsyncWebServerRequest* request)
 {
-    FS& fs = SPIFFS;
-
     if (nullptr == request)
     {
         return;
@@ -447,27 +445,27 @@ static void handleNotFound(AsyncWebServerRequest* request)
         (0 != request->url().endsWith("*.htm")))
     {
         /* If a requested html file down't exist, show the error page. */
-        if (false == fs.exists(request->url()))
+        if (false == FILESYSTEM.exists(request->url()))
         {
             LOG_INFO("Invalid web request: %s", request->url().c_str());
-            request->send(fs, "/error.html", "text/html", false, tmplPageProcessor);
+            request->send(FILESYSTEM, "/error.html", "text/html", false, tmplPageProcessor);
         }
         else
         {
-            request->send(fs, request->url(), "text/html", false, tmplPageProcessor);
+            request->send(FILESYSTEM, request->url(), "text/html", false, tmplPageProcessor);
         }
     }
     /* Some browsers requests for the favorite icon on different places. */
     else if (0 != request->url().endsWith("/favicon.png"))
     {
-        request->send(fs, "/favicon.png");
+        request->send(FILESYSTEM, "/favicon.png");
     }
     /* Handle all other static files with cache control. */
     else if ((0 != request->url().startsWith("/images")) ||
              (0 != request->url().startsWith("/js")) ||
              (0 != request->url().startsWith("/style")))
     {
-        AsyncWebServerResponse* response = request->beginResponse(fs, request->url());
+        AsyncWebServerResponse* response = request->beginResponse(FILESYSTEM, request->url());
 
         response->addHeader("Cache-Control", "max-age=3600");
         request->send(response);
@@ -794,7 +792,7 @@ static void settingsPage(AsyncWebServerRequest* request)
     }
     else if (HTTP_GET == request->method())
     {
-        request->send(SPIFFS, "/settings.html", "text/html", false, tmplPageProcessor);
+        request->send(FILESYSTEM, "/settings.html", "text/html", false, tmplPageProcessor);
     }
     else
     {
@@ -879,7 +877,7 @@ static void uploadHandler(AsyncWebServerRequest *request, const String& filename
         if (U_SPIFFS == cmd)
         {
             /* Close filesystem before continue. */
-            SPIFFS.end();
+            FILESYSTEM.end();
         }
 
         /* Start update */
@@ -889,7 +887,7 @@ static void uploadHandler(AsyncWebServerRequest *request, const String& filename
             gIsUploadError = true;
 
             /* Mount filesystem again, it may be unmounted in case of filesystem update.*/
-            if (false == SPIFFS.begin())
+            if (false == FILESYSTEM.begin())
             {
                 LOG_FATAL("Couldn't mount filesystem.");
             }
@@ -951,7 +949,7 @@ static void uploadHandler(AsyncWebServerRequest *request, const String& filename
         else
         {
             /* Mount filesystem again, it may be unmounted in case of filesystem update. */
-            if (false == SPIFFS.begin())
+            if (false == FILESYSTEM.begin())
             {
                 LOG_FATAL("Couldn't mount filesystem.");
             }

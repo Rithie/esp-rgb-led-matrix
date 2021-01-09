@@ -36,8 +36,8 @@
 #include "HttpStatus.h"
 #include "WebConfig.h"
 #include "Settings.h"
+#include "FileSystem.h"
 
-#include <SPIFFS.h>
 #include <Util.h>
 #include <Logging.h>
 
@@ -149,7 +149,7 @@ public:
         }
         else if (HTTP_GET == request->method())
         {
-            request->send(SPIFFS, "/cp/captivePortal.html", "text/html", false, captivePortalPageProcessor);
+            request->send(FILESYSTEM, "/cp/captivePortal.html", "text/html", false, captivePortalPageProcessor);
         }
         else
         {
@@ -245,10 +245,10 @@ void CaptivePortal::init(AsyncWebServer& srv)
     /* Serve files with static content with enabled cache control.
      * The client may cache files from filesytem for 1 hour.
      */
-    (void)srv.serveStatic("/favicon.png", SPIFFS, "/favicon.png", "max-age=3600");
-    (void)srv.serveStatic("/images/", SPIFFS, "/images/", "max-age=3600");
-    (void)srv.serveStatic("/js/", SPIFFS, "/js/", "max-age=3600");
-    (void)srv.serveStatic("/style/", SPIFFS, "/style/", "max-age=3600");
+    (void)srv.serveStatic("/favicon.png", FILESYSTEM, "/favicon.png", "max-age=3600");
+    (void)srv.serveStatic("/images/", FILESYSTEM, "/images/", "max-age=3600");
+    (void)srv.serveStatic("/js/", FILESYSTEM, "/js/", "max-age=3600");
+    (void)srv.serveStatic("/style/", FILESYSTEM, "/style/", "max-age=3600");
 
     /* Add the captive portal request handler at last, because it will handle everything. */
     (void)srv.addHandler(&gCaptivePortalReqHandler).setFilter(ON_AP_FILTER);
