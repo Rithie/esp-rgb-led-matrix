@@ -105,7 +105,7 @@ public:
      * 
      * @return If successful added, it will return true otherwise false.
      */
-    bool addItem(T item)
+    bool addItem(T& item)
     {
         bool isSuccessful = false;
 

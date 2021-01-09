@@ -212,13 +212,14 @@ void RestApi::error(AsyncWebServerRequest* request)
  */
 static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler)
 {
-    WebPageReq* item = new WebPageReq(request, requestHandler);
+    WebPageReq* item        = new WebPageReq(request, requestHandler);
+    WebReq*     itemBase    = item;
     
     if (nullptr == item)
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
-    else if (false == gTaskDecoupler.addItem(item))
+    else if (false == gTaskDecoupler.addItem(itemBase))
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
@@ -243,13 +244,14 @@ static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunct
  */
 static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler)
 {
-    WebUploadReq* item = new WebUploadReq(request, uploadHandler, filename, index, data, len, final);
+    WebUploadReq*   item        = new WebUploadReq(request, uploadHandler, filename, index, data, len, final);
+    WebReq*         itemBase    = item;
     
     if (nullptr == item)
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
-    else if (false == gTaskDecoupler.addItem(item))
+    else if (false == gTaskDecoupler.addItem(itemBase))
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }

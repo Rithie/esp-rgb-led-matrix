@@ -251,7 +251,8 @@ void Pages::error(AsyncWebServerRequest* request)
  */
 static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunction requestHandler)
 {
-    WebPageReq* item = nullptr;
+    WebPageReq* item        = nullptr;
+    WebReq*     itemBase    = nullptr;
 
     if ((nullptr == request) ||
         (nullptr == requestHandler))
@@ -268,12 +269,13 @@ static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunct
     }
 
     item = new WebPageReq(request, requestHandler);
-    
+    itemBase = item;
+
     if (nullptr == item)
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
-    else if (false == gTaskDecoupler.addItem(item))
+    else if (false == gTaskDecoupler.addItem(itemBase))
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
@@ -298,7 +300,8 @@ static void safeReqHandler(AsyncWebServerRequest* request, ArRequestHandlerFunct
  */
 static void safeUploadHandler(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final, ArUploadHandlerFunction uploadHandler)
 {
-    WebUploadReq* item = nullptr;
+    WebUploadReq*   item        = nullptr;
+    WebReq*         itemBase    = nullptr;
 
     if ((nullptr == request) ||
         (nullptr == uploadHandler))
@@ -315,12 +318,13 @@ static void safeUploadHandler(AsyncWebServerRequest *request, const String& file
     }
 
     item = new WebUploadReq(request, uploadHandler, filename, index, data, len, final);
+    itemBase = item;
     
     if (nullptr == item)
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
-    else if (false == gTaskDecoupler.addItem(item))
+    else if (false == gTaskDecoupler.addItem(itemBase))
     {
         request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
     }
