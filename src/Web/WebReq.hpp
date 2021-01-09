@@ -44,6 +44,7 @@
  * Includes
  *****************************************************************************/
 #include <ESPAsyncWebServer.h>
+#include "WsCmd.h"
 
 /******************************************************************************
  * Macros
@@ -233,7 +234,7 @@ public:
      * @param[in] len           Packet length in byte
      * @param[in] final         Final bit is set for the last packet.
      */
-    WebUploadReq(AsyncWebServerRequest* req, ArUploadHandlerFunction uploadHandler, const String& filename, size_t index, uint8_t* data, size_t len, bool final) :
+    WebUploadReq(AsyncWebServerRequest* req, ArUploadHandlerFunction uploadHandler, const String& filename, size_t index, const uint8_t* data, size_t len, bool final) :
         WebReq(req),
         m_uploadHandler(uploadHandler),
         m_filename(filename),
@@ -242,17 +243,7 @@ public:
         m_len(0U),
         m_final(final)
     {
-        if (nullptr != data)
-        {
-            m_data = new uint8_t[len];
-            
-            if (nullptr != m_data)
-            {
-                m_len = len;
-
-                memcpy(m_data, data, m_len);
-            }
-        }
+        copy(data, len);
     }
 
     /**
@@ -269,17 +260,7 @@ public:
         m_len(0U),
         m_final(webUploadReq.m_final)
     {
-        if (nullptr != webUploadReq.m_data)
-        {
-            m_data = new uint8_t[webUploadReq.m_len];
-            
-            if (nullptr != m_data)
-            {
-                m_len = webUploadReq.m_len;
-
-                memcpy(m_data, webUploadReq.m_data, m_len);
-            }
-        }
+        copy(webUploadReq.m_data, webUploadReq.m_len);
     }
 
     /**
@@ -291,24 +272,19 @@ public:
     {
         if (this != &webUploadReq)
         {
+            if (nullptr != m_data)
+            {
+                delete[] m_data;
+                m_data  = nullptr;
+                m_len   = 0U;
+            }
+
             m_uploadHandler = webUploadReq.m_uploadHandler;
             m_filename      = webUploadReq.m_filename;
             m_index         = webUploadReq.m_index;
-            m_data          = nullptr;
-            m_len           = 0U;
             m_final         = webUploadReq.m_final;
 
-            if (nullptr != webUploadReq.m_data)
-            {
-                m_data = new uint8_t[webUploadReq.m_len];
-                
-                if (nullptr != m_data)
-                {
-                    m_len = webUploadReq.m_len;
-
-                    memcpy(m_data, webUploadReq.m_data, m_len);
-                }
-            }
+            copy(webUploadReq.m_data, webUploadReq.m_len);
         }
 
         return *this;
@@ -340,6 +316,9 @@ public:
 
 protected:
 
+    /**
+     * Constructs a empty web upload request.
+     */
     WebUploadReq() :
         WebReq(nullptr),
         m_uploadHandler(nullptr),
@@ -360,6 +339,173 @@ private:
     size_t                  m_len;              /**< Data packet length in byte */
     bool                    m_final;            /**< Final bit marks the last received data packet */
 
+    /**
+     * Copy data.
+     * 
+     * @param[in] src   Data source
+     * @param[in] size  Data source size in byte
+     */
+    void copy(const uint8_t* src, size_t size)
+    {
+        if (nullptr != src)
+        {
+            m_data = new uint8_t[size];
+            
+            if (nullptr != m_data)
+            {
+                m_len = size;
+
+                memcpy(m_data, src, m_len);
+            }
+        }
+    }
+};
+
+/**
+ * A websocket request, which is handled deferred.
+ */
+class WebWsReq : public WebReq
+{
+public:
+
+    /**
+     * Websocket command handler.
+     * 
+     * @param[in] server    The websocket server.
+     * @param[in] client    The websocket client.
+     * @param[in] data      The message itself, non-terminated.
+     * @param[in] len       The message length in byte.
+     */
+    typedef std::function<void(AsyncWebSocket* server, AsyncWebSocketClient* client, const uint8_t* data, size_t len)> WsHandler;
+
+    /**
+     * Constructs a websocket request.
+     * 
+     * @param[in] server    The websocket server.
+     * @param[in] client    The websocket client.
+     * @param[in] data      The message itself, non-terminated.
+     * @param[in] len       The message length in byte.
+     */
+    WebWsReq(AsyncWebSocket* server, AsyncWebSocketClient* client, const uint8_t* data, size_t len, WsHandler wsHandler) :
+        WebReq(nullptr),
+        m_server(server),
+        m_client(client),
+        m_data(nullptr),
+        m_len(0U),
+        m_wsHandler(wsHandler)
+    {
+        copy(data, len);
+    }
+
+    /**
+     * Constructs a websocket request.
+     * 
+     * @param[in] webWsReq  The websocket request.
+     */
+    WebWsReq(const WebWsReq& webWsReq) :
+        WebReq(webWsReq),
+        m_server(webWsReq.m_server),
+        m_client(webWsReq.m_client),
+        m_data(nullptr),
+        m_len(0U),
+        m_wsHandler(webWsReq.m_wsHandler)
+    {
+        copy(webWsReq.m_data, webWsReq.m_len);
+    }
+
+    /**
+     * Constructs a websocket request.
+     * 
+     * @param[in] webWsReq  The websocket request.
+     */
+    WebWsReq& operator=(const WebWsReq& webWsReq)
+    {
+        if (this != &webWsReq)
+        {
+            if (nullptr != m_data)
+            {
+                delete[] m_data;
+                m_data  = nullptr;
+                m_len   = 0U;
+            }
+
+            m_server    = webWsReq.m_server;
+            m_client    = webWsReq.m_client;
+            m_wsHandler = webWsReq.m_wsHandler;
+
+            copy(webWsReq.m_data, webWsReq.m_len);
+        }
+
+        return *this;
+    }
+
+    /**
+     * Destroys the web page request.
+     */
+    ~WebWsReq()
+    {
+        if (nullptr != m_data)
+        {
+            delete[] m_data;
+            m_data = nullptr;
+            m_len = 0;
+        }
+    }
+
+    /**
+     * Handle the web request with the corresponding handler.
+     */
+    void call() final
+    {
+        if (nullptr != m_wsHandler)
+        {
+            m_wsHandler(m_server, m_client, m_data, m_len);
+        }
+    }
+
+protected:
+
+    /**
+     * Constructs a empty web page request.
+     */
+    WebWsReq() :
+        WebReq(nullptr),
+        m_server(nullptr),
+        m_client(nullptr),
+        m_data(nullptr),
+        m_len(0U),
+        m_wsHandler(nullptr)
+    {
+    }
+
+private:
+
+    AsyncWebSocket*         m_server;       /**< Websocket server */
+    AsyncWebSocketClient*   m_client;       /**< Websocket client */
+    uint8_t*                m_data;         /**< Websocket message, non-terminated. */
+    size_t                  m_len;          /**< Websocket message length in byte. */
+    WsHandler               m_wsHandler;    /**< Websocket message handler */
+
+    /**
+     * Copy data.
+     * 
+     * @param[in] src   Data source
+     * @param[in] size  Data source size in byte
+     */
+    void copy(const uint8_t* src, size_t size)
+    {
+        if (nullptr != src)
+        {
+            m_data = new uint8_t[size];
+            
+            if (nullptr != m_data)
+            {
+                m_len = size;
+                
+                memcpy(m_data, src, m_len);
+            }
+        }
+    }
 };
 
 /******************************************************************************

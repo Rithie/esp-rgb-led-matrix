@@ -84,7 +84,11 @@ void begin(void);
 void end(void);
 
 /**
- * Process the web server.
+ * Process the web server, which means it handles
+ * - page requests,
+ * - REST requests and
+ * - websocket requets.
+ * 
  * This shall be called periodically.
  */
 void process();

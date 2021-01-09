@@ -121,6 +121,7 @@ void MyWebServer::process()
 {
     Pages::process();
     RestApi::process();
+    WebSocketSrv::getInstance().process();
 
     return;
 }

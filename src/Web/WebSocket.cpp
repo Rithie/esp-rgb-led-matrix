@@ -111,7 +111,7 @@ static WsCmdButton          gWsCmdButton;
 static WsCmdEffect          gWsCmdEffect;
 
 /** Websocket command list */
-static WsCmd*       gWsCommands[] =
+static WsCmd*               gWsCommands[] =
 {
     &gWsCmdGetDisp,
     &gWsCmdSlots,
@@ -134,6 +134,8 @@ static WsCmd*       gWsCommands[] =
 
 void WebSocketSrv::init(AsyncWebServer& srv)
 {
+    m_taskDecoupler.init(REQ_QUEUE_MAX_ITEMS, sizeof(WebReq*));
+
     /* Register websocket event handler */
     m_webSocket.onEvent(onEvent);
 
@@ -142,6 +144,22 @@ void WebSocketSrv::init(AsyncWebServer& srv)
 
     /* Register websocket on webserver */
     srv.addHandler(&m_webSocket);
+
+    return;
+}
+
+void WebSocketSrv::process()
+{
+    WebReq* msg = nullptr;
+
+    if (true == m_taskDecoupler.getItem(msg))
+    {
+        if (nullptr != msg)
+        {
+            msg->call();
+            delete msg;
+        }
+    }
 
     return;
 }
@@ -268,7 +286,17 @@ void WebSocketSrv::onData(AsyncWebSocket* server, AsyncWebSocketClient* client, 
         /* Handle text message */
         else
         {
-            handleMsg(server, client, reinterpret_cast<const char*>(data), len);
+            WebWsReq*   webWsReq        = new WebWsReq(server, client, data, len,
+                [this](AsyncWebSocket* server, AsyncWebSocketClient* client, const uint8_t* data, size_t len)
+                {
+                    this->handleMsg(server, client, data, len);
+                });
+            WebReq*     webWsReqBase    = webWsReq;
+
+            if (nullptr != webWsReq)
+            {
+                m_taskDecoupler.addItem(webWsReqBase);
+            }
         }
     }
     /* Message is comprised of multiple frames or the frame is split into multiple packets */
@@ -281,8 +309,10 @@ void WebSocketSrv::onData(AsyncWebSocket* server, AsyncWebSocketClient* client, 
     return;
 }
 
-void WebSocketSrv::handleMsg(AsyncWebSocket* server, AsyncWebSocketClient* client, const char* msg, size_t msgLen)
+void WebSocketSrv::handleMsg(AsyncWebSocket* server, AsyncWebSocketClient* client, const uint8_t* data, size_t len)
 {
+    const char* msg         = reinterpret_cast<const char*>(data);
+    size_t      msgLen      = len;
     size_t      msgIndex    = 0U;
     String      cmd;
     String      par;

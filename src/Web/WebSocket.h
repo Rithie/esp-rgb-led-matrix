@@ -48,6 +48,8 @@
 #include <Print.h>
 
 #include "WebConfig.h"
+#include "TaskDecoupler.hpp"
+#include "WebReq.hpp"
 
 /******************************************************************************
  * Macros
@@ -83,15 +85,35 @@ public:
      */
     void init(AsyncWebServer& srv);
 
+    /**
+     * Process all websocket requests.
+     */
+    void process();
+
 private:
 
-    AsyncWebSocket  m_webSocket;    /**< Websocket */
+    /** Max. number of requests, which to store in the task decoupling queue. */
+    static const uint32_t   REQ_QUEUE_MAX_ITEMS = 20U;
+
+    /**
+     * Asynchronous websocket.
+     */
+    AsyncWebSocket          m_webSocket;
+
+    /**
+     * Task decoupler, to handle all websocket requests in the main loop. This shall
+     * prevent the AsyncTCP task from not being able to feed the watchdog and
+     * to have any kind of flash access in the main loop (less artifacts on the
+     * display).
+     */
+    TaskDecoupler<WebReq*>  m_taskDecoupler;
 
     /**
      * Constructs the websocket server.
      */
     WebSocketSrv() :
-        m_webSocket(WebConfig::WEBSOCKET_PATH)
+        m_webSocket(WebConfig::WEBSOCKET_PATH),
+        m_taskDecoupler()
     {
     }
 
@@ -168,10 +190,10 @@ private:
      *
      * @param[in] server    Websocket server
      * @param[in] client    Weboscket client
-     * @param[in] msg       Websocket message (not '\0' terminated)
-     * @param[in] msgLen    Websocket message length
+     * @param[in] data      Websocket data
+     * @param[in] len       Websocket data length in bytes
      */
-    void handleMsg(AsyncWebSocket* server, AsyncWebSocketClient* client, const char* msg, size_t msgLen);
+    void handleMsg(AsyncWebSocket* server, AsyncWebSocketClient* client, const uint8_t* data, size_t len);
 
     /**
      * Write single data byte to all clients.
