@@ -89,7 +89,12 @@ public:
      */
     WebReq& operator=(const WebReq& webReq)
     {
-        m_request = webReq.m_request;
+        if (this != &webReq)
+        {
+            m_request = webReq.m_request;
+        }
+
+        return *this;
     }
 
     /**
@@ -167,7 +172,12 @@ public:
      */
     WebPageReq& operator=(const WebPageReq& webPageReq)
     {
-        m_pageHandler = webPageReq.m_pageHandler;
+        if (this != &webPageReq)
+        {
+            m_pageHandler = webPageReq.m_pageHandler;
+        }
+
+        return *this;
     }
 
     /**
@@ -279,24 +289,29 @@ public:
      */
     WebUploadReq& operator=(const WebUploadReq& webUploadReq)
     {
-        m_uploadHandler = webUploadReq.m_uploadHandler;
-        m_filename      = webUploadReq.m_filename;
-        m_index         = webUploadReq.m_index;
-        m_data          = nullptr;
-        m_len           = 0U;
-        m_final         = webUploadReq.m_final;
-
-        if (nullptr != webUploadReq.m_data)
+        if (this != &webUploadReq)
         {
-            m_data = new uint8_t[webUploadReq.m_len];
-            
-            if (nullptr != m_data)
-            {
-                m_len = webUploadReq.m_len;
+            m_uploadHandler = webUploadReq.m_uploadHandler;
+            m_filename      = webUploadReq.m_filename;
+            m_index         = webUploadReq.m_index;
+            m_data          = nullptr;
+            m_len           = 0U;
+            m_final         = webUploadReq.m_final;
 
-                memcpy(m_data, webUploadReq.m_data, m_len);
+            if (nullptr != webUploadReq.m_data)
+            {
+                m_data = new uint8_t[webUploadReq.m_len];
+                
+                if (nullptr != m_data)
+                {
+                    m_len = webUploadReq.m_len;
+
+                    memcpy(m_data, webUploadReq.m_data, m_len);
+                }
             }
         }
+
+        return *this;
     }
 
     /**
