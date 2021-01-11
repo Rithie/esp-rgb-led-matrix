@@ -64,6 +64,9 @@ static void error(AsyncWebServerRequest* request);
 /** Web server */
 static AsyncWebServer   gWebServer(WebConfig::WEBSERVER_PORT);
 
+/** Is captive portal enabled? */
+static bool             gIsCaptivePortalEnabled = false;
+
 /******************************************************************************
  * Public Methods
  *****************************************************************************/
@@ -84,19 +87,18 @@ void MyWebServer::init(bool initCaptivePortal)
 {
     if (false == initCaptivePortal)
     {
-        /* Register all web pages */
         Pages::init(gWebServer);
         RestApi::init(gWebServer);
-
-        gWebServer.onNotFound(error);
-
-        /* Register websocket */
         WebSocketSrv::getInstance().init(gWebServer);
     }
     else
     {
         CaptivePortal::init(gWebServer);
     }
+
+    gWebServer.onNotFound(error);
+
+    gIsCaptivePortalEnabled = initCaptivePortal;
 
     return;
 }
@@ -119,10 +121,17 @@ void MyWebServer::end()
 
 void MyWebServer::process()
 {
-    Pages::process();
-    RestApi::process();
-    WebSocketSrv::getInstance().process();
-
+    if (false == gIsCaptivePortalEnabled)
+    {
+        Pages::process();
+        RestApi::process();
+        WebSocketSrv::getInstance().process();
+    }
+    else
+    {
+        CaptivePortal::process();
+    }
+    
     return;
 }
 
@@ -147,14 +156,21 @@ static void error(AsyncWebServerRequest* request)
         return;
     }
 
-    /* REST request? */
-    if (request->url().startsWith(RestApi::BASE_URI))
+    if (false == gIsCaptivePortalEnabled)
     {
-        RestApi::error(request);
+        /* REST request? */
+        if (request->url().startsWith(RestApi::BASE_URI))
+        {
+            RestApi::error(request);
+        }
+        else
+        {
+            Pages::error(request);
+        }
     }
     else
     {
-        Pages::error(request);
+        CaptivePortal::error(request);
     }
 
     return;

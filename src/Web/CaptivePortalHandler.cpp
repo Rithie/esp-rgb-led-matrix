@@ -64,6 +64,54 @@
 
 void CaptivePortalHandler::handleRequest(AsyncWebServerRequest* request)
 {
+    WebPageReq* item        = nullptr;
+    WebReq*     itemBase    = nullptr;
+
+    if (nullptr == request)
+    {
+        return;
+    }
+
+    /* Force authentication! */
+    if (false == request->authenticate(WebConfig::WEB_LOGIN_USER, WebConfig::WEB_LOGIN_PASSWORD))
+    {
+        /* Request DIGEST authentication */
+        request->requestAuthentication();
+        return;
+    }
+
+    item = new WebPageReq(request,
+        [this](AsyncWebServerRequest* request)
+        {
+            this->handleRequestDeferred(request);
+        });
+    itemBase = item;
+
+    if (nullptr == item)
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else if (false == m_queue.addItem(itemBase))
+    {
+        request->send(HttpStatus::STATUS_CODE_INSUFFICIENT_STORAGE);
+    }
+    else
+    {
+        /* Successful added to queue. */
+        ;
+    }
+}
+
+/******************************************************************************
+ * Protected Methods
+ *****************************************************************************/
+
+/******************************************************************************
+ * Private Methods
+ *****************************************************************************/
+
+void CaptivePortalHandler::handleRequestDeferred(AsyncWebServerRequest* request)
+{
     if (nullptr == request)
     {
         return;
@@ -96,7 +144,7 @@ void CaptivePortalHandler::handleRequest(AsyncWebServerRequest* request)
 
                 settings.close();
 
-                request->send(HttpStatus::STATUS_CODE_OK, "plain/text", "Ok.");
+                request->send(HttpStatus::STATUS_CODE_OK, "plain/text", "Successful stored.");
             }
             else
             {
@@ -131,14 +179,6 @@ void CaptivePortalHandler::handleRequest(AsyncWebServerRequest* request)
         request->send(HttpStatus::STATUS_CODE_BAD_REQUEST, "plain/text", "Error");
     }
 }
-
-/******************************************************************************
- * Protected Methods
- *****************************************************************************/
-
-/******************************************************************************
- * Private Methods
- *****************************************************************************/
 
 String CaptivePortalHandler::captivePortalPageProcessor(const String& var)
 {

@@ -46,6 +46,9 @@
 #include <ESPAsyncWebServer.h>
 #include <stdint.h>
 
+#include "TaskDecoupler.hpp"
+#include "WebReq.hpp"
+
 /******************************************************************************
  * Macros
  *****************************************************************************/
@@ -69,9 +72,11 @@ public:
     /**
      * Constructs the captive portal request handler.
      * 
+     * @param[in] queue             Queue to decouple web requests
      * @param[in] resetReqHandler   Reset request handler
      */
-    CaptivePortalHandler(ResetReqHandler resetReqHandler) :
+    CaptivePortalHandler(TaskDecoupler<WebReq*>& queue, ResetReqHandler resetReqHandler) :
+        m_queue(queue),
         m_resetReqHandler(resetReqHandler)
     {
     }
@@ -92,8 +97,23 @@ public:
      */
     bool canHandle(AsyncWebServerRequest* request) final
     {
-        /* The captive portal handles every request. */
-        return true;
+        bool handleIt = false;
+
+        /* The captive portal handles every page request.
+         * All other typical static files shall be handled separately.
+         * In other words, the captive portal handles HTML files and have to
+         * consider directory requests too.
+         */
+        if ((0 == request->url().endsWith(".js")) &&
+            (0 == request->url().endsWith(".css")) &&
+            (0 == request->url().endsWith(".png")) &&
+            (0 == request->url().endsWith(".jpg")) &&
+            (0 == request->url().endsWith(".bmp")))
+        {
+            handleIt = true;
+        }
+
+        return handleIt;
     }
 
     /**
@@ -116,11 +136,19 @@ public:
 
 private:
 
-    ResetReqHandler m_resetReqHandler;  /**< Reset request handler */
+    TaskDecoupler<WebReq*>& m_queue;            /**< Queue to decouple web requests */
+    ResetReqHandler         m_resetReqHandler;  /**< Reset request handler */
 
     CaptivePortalHandler();
     CaptivePortalHandler(const CaptivePortalHandler& handler);
     CaptivePortalHandler& operator=(const CaptivePortalHandler& handler);
+
+    /**
+     * Handles the request.
+     *
+     * @param[in] request   Web request, which to handle.
+     */
+    void handleRequestDeferred(AsyncWebServerRequest* request);
 
     /**
      * Processor for index page template.

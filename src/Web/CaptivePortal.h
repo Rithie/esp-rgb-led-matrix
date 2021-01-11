@@ -70,6 +70,18 @@ namespace CaptivePortal
 void init(AsyncWebServer& srv);
 
 /**
+ * Process all web page requests.
+ */
+void process();
+
+/**
+ * Error web page used in case a requested path was not found.
+ * 
+ * @param[in] request   Web request
+ */
+void error(AsyncWebServerRequest* request);
+
+/**
  * Is restart requested by captive portal?
  *
  * @return If restart is requested it will return true otherwise false.

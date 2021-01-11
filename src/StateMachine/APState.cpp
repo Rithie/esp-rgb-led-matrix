@@ -194,6 +194,9 @@ void APState::process(StateMachine& sm)
 {
     m_dnsServer.processNextRequest();
 
+    /* Handle web requests */
+    MyWebServer::process();
+    
     if (true == CaptivePortal::isRestartRequested())
     {
         sm.setState(RestartState::getInstance());
