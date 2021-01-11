@@ -116,7 +116,7 @@ static const char*              FIRMWARE_FILENAME       = "firmware.bin";
 static const char*              FILESYSTEM_FILENAME     = "spiffs.bin";
 
 /**
- * Task decoupler, to handle all REST requests in the main loop. This shall
+ * Task decoupler, to handle all page requests in the main loop. This shall
  * prevent the AsyncTCP task from not being able to feed the watchdog and
  * to have any kind of flash access in the main loop (less artifacts on the
  * display).
